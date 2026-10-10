@@ -2,7 +2,7 @@
 members = ["vestalib-cli", "vestalib-core"]
 
 [workspace.package]
-version = "1.0.2"
+version = "2.0.0"
 authors = ["Martijn Gribnau <garm@ilumeo.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
@@ -10,8 +10,8 @@ repository = "https://github.com/foresterre/vestalib"
 
 [workspace.dependencies]
 # this workspace
-vestalib-core = { version = "1.0.2", path = "vestalib-core" }
-vestalib-cli = { version = "1.0.2", path = "vestalib-cli" }
+vestalib-core = { version = "2.0.0", path = "vestalib-core" }
+vestalib-cli = { version = "2.0.0", path = "vestalib-cli" }
 
 # external
 anyhow = "1"
@@ -26,6 +26,7 @@ authors.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+rust-version = "1.88"
 
 [[bin]]
 name = "vestalib"

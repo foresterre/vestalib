@@ -1,5 +1,6 @@
-use crate::api::{Authentication, Body, BodyError, Endpoint};
-use crate::board::{Character, InvalidSize, Layout};
+use crate::api::local::{Authentication, Local};
+use crate::api::{Body, BodyError, Endpoint};
+use crate::board::{Character, InvalidSize, Layout, Model};
 use std::borrow::Cow;
 use std::fmt;
 use std::num::NonZeroU32;
@@ -17,6 +18,8 @@ impl ReadMessage {
 }
 
 impl Endpoint for ReadMessage {
+    type Api = Local;
+
     fn method(&self) -> http::Method {
         http::Method::GET
     }
@@ -75,9 +78,13 @@ pub struct SendMessage<'a> {
 }
 
 impl<'a> SendMessage<'a> {
-    pub fn new(layout: Cow<'a, Layout>) -> Result<Self, UnavailableCharacter> {
+    pub fn new(layout: Cow<'a, Layout>) -> Result<Self, InvalidMessage> {
+        if let model @ Model::NoteArray(_) = layout.model() {
+            return Err(InvalidMessage::NoteArray { model });
+        }
+
         if layout.contains(Character::Filled) {
-            return Err(UnavailableCharacter {
+            return Err(InvalidMessage::UnavailableCharacter {
                 character: Character::Filled,
             });
         }
@@ -96,6 +103,8 @@ impl<'a> SendMessage<'a> {
 }
 
 impl<'a> Endpoint for SendMessage<'a> {
+    type Api = Local;
+
     fn method(&self) -> http::Method {
         http::Method::POST
     }
@@ -136,13 +145,19 @@ impl<'a> Endpoint for SendMessage<'a> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-#[error(
-    "The character '{:?}' (code '{}') is not available for the Local API",
-    character,
-    character.code()
-)]
-pub struct UnavailableCharacter {
-    pub character: Character,
+#[non_exhaustive]
+pub enum InvalidMessage {
+    #[error(
+        "The character '{:?}' (code '{}') is not available for the Local API",
+        character,
+        character.code()
+    )]
+    UnavailableCharacter { character: Character },
+    #[error(
+        "The Local API can't show a message on a Note Array ('{}'), send a message to each Note instead",
+        model
+    )]
+    NoteArray { model: Model },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -241,7 +256,7 @@ pub struct UnknownStrategy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::board::Model;
+    use crate::board::NoteArray;
     use serde_json::json;
 
     fn note() -> Layout {
@@ -303,9 +318,19 @@ mod tests {
 
         assert_eq!(
             SendMessage::new(Cow::Owned(layout)).unwrap_err(),
-            UnavailableCharacter {
+            InvalidMessage::UnavailableCharacter {
                 character: Character::Filled
             }
+        );
+    }
+
+    #[test]
+    fn note_array_is_unsupported() {
+        let model = Model::NoteArray(NoteArray::Grid2x2);
+
+        assert_eq!(
+            SendMessage::new(Cow::Owned(Layout::blank(model))).unwrap_err(),
+            InvalidMessage::NoteArray { model }
         );
     }
 

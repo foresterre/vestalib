@@ -31,10 +31,12 @@ export VESTABOARD_LOCAL_API_KEY=<api-key>
 **HTTP Client**
 
 ```rust
-use vestalib::client::{ApiKey, ReqwestClient};
+use vestalib::client::ReqwestClient;
+use vestalib::client::local::{ApiKey, LocalConnection};
 
-let client = ReqwestClient::new("http://192.168.1.50:7000".parse()?)?
+let connection = LocalConnection::new("http://192.168.1.50:7000".parse()?)?
     .with_api_key(ApiKey::new("<api-key>")?);
+let client = ReqwestClient::new(connection)?;
 ```
 
 ### Enable the Local API: `vestalib enable`
@@ -50,7 +52,7 @@ vestalib enable --token <enablement-token>
 ```rust
 use vestalib::api::Query;
 use vestalib::api::local::{Enabled, Enablement};
-use vestalib::client::EnablementToken;
+use vestalib::client::local::EnablementToken;
 
 let enabled: Enabled = Enablement::new(EnablementToken::new("<enablement-token>")?).query(&client)?;
 ```

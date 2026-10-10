@@ -1,82 +1,43 @@
 use crate::api::ApiError::HttpRequest;
-use crate::api::{ApiError, Client};
-use crate::client::{API_KEY_HEADER, ApiKey};
+use crate::api::{Api, ApiError, AsyncClient, Client, Connection, MissingCredential};
 use bytes::Bytes;
 use http::request::Builder;
+use http::{HeaderMap, StatusCode, Version};
 use reqwest::ResponseBuilderExt;
-use std::borrow::Cow;
 use url::Url;
 
-pub const DEFAULT_URL: &str = "http://vestaboard.local:7000/";
-
-pub struct ReqwestClient {
+pub struct ReqwestClient<C> {
     client: reqwest::blocking::Client,
-    // Doesn't include the path of an endpoint.
-    // A full path would be: http://vestaboard.local:7000/local-api/message,
-    // just the url: http://vestaboard.local:7000
-    url: Url,
-    api_key: Option<ApiKey>,
+    connection: C,
 }
 
-impl ReqwestClient {
-    pub fn new(mut url: Url) -> Result<Self, NewClientError> {
-        if url.scheme() != "http" {
-            return Err(NewClientError::UnsupportedScheme { url });
-        }
-
-        if !url.path().ends_with('/') {
-            url.set_path(&format!("{}/", url.path()));
-        }
-
+impl<C: Connection> ReqwestClient<C> {
+    pub fn new(connection: C) -> Result<Self, NewClientError> {
         Ok(Self {
             client: reqwest::blocking::ClientBuilder::default().build()?,
-            url,
-            api_key: None,
+            connection,
         })
-    }
-
-    /// Local API key for endpoints which require authentication.
-    pub fn with_api_key(mut self, api_key: ApiKey) -> Self {
-        self.api_key = Some(api_key);
-        self
-    }
-
-    fn send_request(
-        &self,
-        request: http::Request<Vec<u8>>,
-    ) -> Result<http::Response<Bytes>, Error> {
-        // https://docs.rs/reqwest/latest/reqwest/blocking/struct.Request.html#method.try_from
-        let req = request.try_into()?;
-
-        // execute the query
-        let res = self.client.execute(req)?;
-
-        // no try_into from reqwest::blocking::Response for http::Response
-        let http_res = into_http_response(res)?;
-
-        Ok(http_res)
     }
 }
 
-impl Client for ReqwestClient {
+impl<C: Connection> Connection for ReqwestClient<C> {
+    type Api = C::Api;
+
+    fn base_url(&self) -> &Url {
+        self.connection.base_url()
+    }
+
+    fn authorize(
+        &self,
+        request_builder: Builder,
+        authentication: <Self::Api as Api>::Authentication<'_>,
+    ) -> Result<Builder, MissingCredential> {
+        self.connection.authorize(request_builder, authentication)
+    }
+}
+
+impl<C: Connection> Client for ReqwestClient<C> {
     type Error = Error;
-
-    fn base_endpoint(&self, path: &str) -> Result<Url, ApiError<Self::Error>> {
-        self.url.join(path).map_err(|e| ApiError::Url {
-            error: e,
-            url: self.url.to_string(),
-            path: Cow::Owned(path.to_string()),
-        })
-    }
-
-    fn authorize(&self, request_builder: Builder) -> Result<Builder, ApiError<Self::Error>> {
-        match &self.api_key {
-            Some(api_key) => {
-                Ok(request_builder.header(API_KEY_HEADER, api_key.as_header_value().clone()))
-            }
-            None => Err(ApiError::NoApiKey),
-        }
-    }
 
     fn send(
         &self,
@@ -87,7 +48,54 @@ impl Client for ReqwestClient {
             .body(body)
             .map_err(|error| HttpRequest { error })?;
 
-        self.send_request(request)
+        send_request(&self.client, request).map_err(|error| ApiError::Client { error })
+    }
+}
+
+pub struct ReqwestAsyncClient<C> {
+    client: reqwest::Client,
+    connection: C,
+}
+
+impl<C: Connection> ReqwestAsyncClient<C> {
+    pub fn new(connection: C) -> Result<Self, NewClientError> {
+        Ok(Self {
+            client: reqwest::ClientBuilder::default().build()?,
+            connection,
+        })
+    }
+}
+
+impl<C: Connection> Connection for ReqwestAsyncClient<C> {
+    type Api = C::Api;
+
+    fn base_url(&self) -> &Url {
+        self.connection.base_url()
+    }
+
+    fn authorize(
+        &self,
+        request_builder: Builder,
+        authentication: <Self::Api as Api>::Authentication<'_>,
+    ) -> Result<Builder, MissingCredential> {
+        self.connection.authorize(request_builder, authentication)
+    }
+}
+
+impl<C: Connection + Sync> AsyncClient for ReqwestAsyncClient<C> {
+    type Error = Error;
+
+    async fn send_async(
+        &self,
+        request_builder: Builder,
+        body: Vec<u8>,
+    ) -> Result<http::Response<Bytes>, ApiError<Self::Error>> {
+        let request = request_builder
+            .body(body)
+            .map_err(|error| HttpRequest { error })?;
+
+        send_request_async(&self.client, request)
+            .await
             .map_err(|error| ApiError::Client { error })
     }
 }
@@ -109,63 +117,55 @@ pub enum NewClientError {
         #[from]
         error: reqwest::Error,
     },
-    #[error(
-        "The Local API is only served over plain HTTP, but '{}' uses the '{}' scheme",
-        url,
-        url.scheme()
-    )]
-    UnsupportedScheme { url: Url },
 }
 
-fn into_http_response(res: reqwest::blocking::Response) -> Result<http::Response<Bytes>, Error> {
-    let mut builder = http::response::Builder::new()
-        .status(res.status())
-        .version(res.version())
-        .url(res.url().clone());
+fn send_request(
+    client: &reqwest::blocking::Client,
+    request: http::Request<Vec<u8>>,
+) -> Result<http::Response<Bytes>, Error> {
+    // https://docs.rs/reqwest/latest/reqwest/blocking/struct.Request.html#method.try_from
+    let req = request.try_into()?;
 
-    for (name, value) in res.headers() {
-        builder = builder.header(name, value);
-    }
+    // execute the query
+    let res = client.execute(req)?;
 
+    // no try_into from reqwest::blocking::Response for http::Response
+    let builder = response_builder(res.status(), res.version(), res.url(), res.headers());
     let body = res.bytes()?;
     let response = builder.body(body).unwrap();
 
     Ok(response)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+async fn send_request_async(
+    client: &reqwest::Client,
+    request: http::Request<Vec<u8>>,
+) -> Result<http::Response<Bytes>, Error> {
+    let req = request.try_into()?;
 
-    #[yare::parameterized(
-        host = { "http://vestaboard.local:7000", "http://vestaboard.local:7000/local-api/message" },
-        host_with_slash = { "http://vestaboard.local:7000/", "http://vestaboard.local:7000/local-api/message" },
-        ip = { "http://192.168.1.101:7000", "http://192.168.1.101:7000/local-api/message" },
-        path = { "http://proxy.local/board-2", "http://proxy.local/board-2/local-api/message" },
-        path_with_slash = { "http://proxy.local/board-2/", "http://proxy.local/board-2/local-api/message" },
-    )]
-    fn base_endpoint(url: &str, expected: &str) {
-        let client = ReqwestClient::new(Url::parse(url).unwrap()).unwrap();
+    let res = client.execute(req).await?;
 
-        assert_eq!(
-            client.base_endpoint("local-api/message").unwrap().as_str(),
-            expected
-        );
+    let builder = response_builder(res.status(), res.version(), res.url(), res.headers());
+    let body = res.bytes().await?;
+    let response = builder.body(body).unwrap();
+
+    Ok(response)
+}
+
+fn response_builder(
+    status: StatusCode,
+    version: Version,
+    url: &Url,
+    headers: &HeaderMap,
+) -> http::response::Builder {
+    let mut builder = http::response::Builder::new()
+        .status(status)
+        .version(version)
+        .url(url.clone());
+
+    for (name, value) in headers {
+        builder = builder.header(name, value);
     }
 
-    #[yare::parameterized(
-        https = { "https://vestaboard.local:7000" },
-        file = { "file:///tmp/board" },
-    )]
-    fn rejects_unsupported_schemes(url: &str) {
-        assert!(matches!(
-            ReqwestClient::new(Url::parse(url).unwrap()),
-            Err(NewClientError::UnsupportedScheme { .. })
-        ));
-    }
-
-    #[test]
-    fn default_url_is_valid() {
-        assert!(ReqwestClient::new(Url::parse(DEFAULT_URL).unwrap()).is_ok());
-    }
+    builder
 }

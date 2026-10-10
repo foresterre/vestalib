@@ -1,5 +1,6 @@
-use crate::api::{Authentication, Endpoint};
-use crate::client::{ApiKey, EnablementToken};
+use crate::api::Endpoint;
+use crate::api::local::{Authentication, Local};
+use crate::client::local::{ApiKey, EnablementToken};
 use std::borrow::Cow;
 
 /// API to enable the Local API, which responds with the Local API key.
@@ -17,6 +18,8 @@ impl Enablement {
 }
 
 impl Endpoint for Enablement {
+    type Api = Local;
+
     fn method(&self) -> http::Method {
         http::Method::POST
     }
