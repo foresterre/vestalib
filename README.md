@@ -85,12 +85,12 @@ vestalib send --model note --text $'HELLO\nWORLD'
 
 ```rust
 use std::borrow::Cow;
-use vestalib::api::{Ignore, Query};
+use vestalib::api::{Void, Query};
 use vestalib::api::local::SendMessage;
 use vestalib::board::{Layout, Model};
 
 let layout = Layout::from_text(Model::Note, "HELLO\nWORLD")?;
-Ignore::new(SendMessage::new(Cow::Borrowed(&layout))?).query(&client)?;
+Void::new(SendMessage::new(Cow::Borrowed(&layout))?).query(&client)?;
 ```
 
 ### Send a message with a transition: `vestalib send --strategy`
@@ -107,7 +107,7 @@ vestalib send --text "HELLO WORLD" --strategy column --step-interval-ms 100 --st
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 use std::time::Duration;
-use vestalib::api::{Ignore, Query};
+use vestalib::api::{Void, Query};
 use vestalib::api::local::{SendMessage, Strategy, Transition};
 use vestalib::board::{Layout, Model};
 
@@ -115,7 +115,7 @@ let layout = Layout::from_text(Model::Flagship, "HELLO WORLD")?;
 let transition = Transition::new(Strategy::Column)
     .with_step_interval(Duration::from_millis(100))
     .with_step_size(NonZeroU32::new(2).unwrap());
-Ignore::new(SendMessage::new(Cow::Borrowed(&layout))?.with_transition(transition)).query(&client)?;
+Void::new(SendMessage::new(Cow::Borrowed(&layout))?.with_transition(transition)).query(&client)?;
 ```
 
 ## Examples
@@ -132,12 +132,12 @@ vestalib send --model note --text $'HELLO\nWORLD'
 
 ```rust
 use std::borrow::Cow;
-use vestalib::api::{Ignore, Query};
+use vestalib::api::{Void, Query};
 use vestalib::api::local::SendMessage;
 use vestalib::board::{Layout, Model};
 
 let layout = Layout::from_text(Model::Note, "HELLO\nWORLD")?;
-Ignore::new(SendMessage::new(Cow::Borrowed(&layout))?).query(&client)?;
+Void::new(SendMessage::new(Cow::Borrowed(&layout))?).query(&client)?;
 ```
 
 ### Clock
@@ -157,7 +157,7 @@ done
 use std::borrow::Cow;
 use std::thread::sleep;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use vestalib::api::{Ignore, Query};
+use vestalib::api::{Void, Query};
 use vestalib::api::local::SendMessage;
 use vestalib::board::{Layout, Model};
 
@@ -165,7 +165,7 @@ loop {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
     let text = format!("\n   {:02}:{:02} UTC", secs / 3600 % 24, secs / 60 % 60);
     let layout = Layout::from_text(Model::Note, &text)?;
-    Ignore::new(SendMessage::new(Cow::Borrowed(&layout))?).query(&client)?;
+    Void::new(SendMessage::new(Cow::Borrowed(&layout))?).query(&client)?;
     sleep(Duration::from_secs(60 - secs % 60));
 }
 ```
