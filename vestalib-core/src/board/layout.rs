@@ -6,15 +6,26 @@ use std::str::FromStr;
 pub enum Model {
     Flagship,
     Note,
+    /// Only supported by the Cloud API.
+    NoteArray(NoteArray),
 }
 
 impl Model {
-    const ALL: [Model; 2] = [Model::Flagship, Model::Note];
+    const ALL: [Model; 7] = [
+        Model::Flagship,
+        Model::Note,
+        Model::NoteArray(NoteArray::SideBySide2),
+        Model::NoteArray(NoteArray::SideBySide4),
+        Model::NoteArray(NoteArray::Stacked2),
+        Model::NoteArray(NoteArray::Stacked4),
+        Model::NoteArray(NoteArray::Grid2x2),
+    ];
 
     pub fn rows(self) -> usize {
         match self {
             Model::Flagship => 6,
             Model::Note => 3,
+            Model::NoteArray(array) => Model::Note.rows() * array.notes_per_column(),
         }
     }
 
@@ -22,6 +33,7 @@ impl Model {
         match self {
             Model::Flagship => 22,
             Model::Note => 15,
+            Model::NoteArray(array) => Model::Note.columns() * array.notes_per_row(),
         }
     }
 
@@ -29,6 +41,46 @@ impl Model {
         match self {
             Model::Flagship => "flagship",
             Model::Note => "note",
+            Model::NoteArray(NoteArray::SideBySide2) => "note-array-1x2",
+            Model::NoteArray(NoteArray::SideBySide4) => "note-array-1x4",
+            Model::NoteArray(NoteArray::Stacked2) => "note-array-2x1",
+            Model::NoteArray(NoteArray::Stacked4) => "note-array-4x1",
+            Model::NoteArray(NoteArray::Grid2x2) => "note-array-2x2",
+        }
+    }
+}
+
+/// A group of Vestaboard Notes, which the Cloud API treats as one board.
+///
+/// See <https://docs.vestaboard.com/docs/read-write-api/note-arrays>
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NoteArray {
+    /// 2 Notes side by side: 3 rows of 30 characters
+    SideBySide2,
+    /// 4 Notes side by side: 3 rows of 60 characters
+    SideBySide4,
+    /// 2 Notes stacked: 6 rows of 15 characters
+    Stacked2,
+    /// 4 Notes stacked: 12 rows of 15 characters
+    Stacked4,
+    /// 2 by 2 Notes: 6 rows of 30 characters
+    Grid2x2,
+}
+
+impl NoteArray {
+    fn notes_per_row(self) -> usize {
+        match self {
+            NoteArray::SideBySide2 | NoteArray::Grid2x2 => 2,
+            NoteArray::SideBySide4 => 4,
+            NoteArray::Stacked2 | NoteArray::Stacked4 => 1,
+        }
+    }
+
+    fn notes_per_column(self) -> usize {
+        match self {
+            NoteArray::SideBySide2 | NoteArray::SideBySide4 => 1,
+            NoteArray::Stacked2 | NoteArray::Grid2x2 => 2,
+            NoteArray::Stacked4 => 4,
         }
     }
 }
@@ -54,7 +106,7 @@ impl FromStr for Model {
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "Unknown Vestaboard model '{}', expected one of: flagship, note",
+    "Unknown Vestaboard model '{}', expected one of: flagship, note, note-array-1x2, note-array-1x4, note-array-2x1, note-array-4x1, or note-array-2x2",
     value
 )]
 pub struct UnknownModel {
@@ -154,7 +206,7 @@ impl serde::Serialize for Layout {
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error(
-    "Expected 6 rows of 22 characters (Flagship), or 3 rows of 15 characters (Note), but got '{}' rows with lengths '{:?}'",
+    "Expected 6 rows of 22 characters (Flagship), 3 rows of 15 characters (Note), or the combined size of a Note Array, but got '{}' rows with lengths '{:?}'",
     rows,
     columns
 )]
@@ -198,6 +250,11 @@ mod tests {
     #[yare::parameterized(
         flagship = { 6, 22, Model::Flagship },
         note = { 3, 15, Model::Note },
+        note_array_side_by_side_2 = { 3, 30, Model::NoteArray(NoteArray::SideBySide2) },
+        note_array_side_by_side_4 = { 3, 60, Model::NoteArray(NoteArray::SideBySide4) },
+        note_array_stacked_2 = { 6, 15, Model::NoteArray(NoteArray::Stacked2) },
+        note_array_stacked_4 = { 12, 15, Model::NoteArray(NoteArray::Stacked4) },
+        note_array_grid_2x2 = { 6, 30, Model::NoteArray(NoteArray::Grid2x2) },
     )]
     fn infers_model_from_size(rows: usize, columns: usize, expected: Model) {
         assert_eq!(Layout::new(grid(rows, columns)).unwrap().model(), expected);
@@ -208,7 +265,7 @@ mod tests {
         flagship_too_few_rows = { 5, 22 },
         flagship_too_many_columns = { 6, 23 },
         note_too_few_columns = { 3, 14 },
-        note_array = { 3, 30 },
+        three_notes_side_by_side = { 3, 45 },
         mixed = { 3, 22 },
     )]
     fn rejects_invalid_sizes(rows: usize, columns: usize) {
@@ -287,6 +344,11 @@ mod tests {
     #[yare::parameterized(
         flagship = { "flagship", Model::Flagship },
         note = { "note", Model::Note },
+        note_array_side_by_side_2 = { "note-array-1x2", Model::NoteArray(NoteArray::SideBySide2) },
+        note_array_side_by_side_4 = { "note-array-1x4", Model::NoteArray(NoteArray::SideBySide4) },
+        note_array_stacked_2 = { "note-array-2x1", Model::NoteArray(NoteArray::Stacked2) },
+        note_array_stacked_4 = { "note-array-4x1", Model::NoteArray(NoteArray::Stacked4) },
+        note_array_grid_2x2 = { "note-array-2x2", Model::NoteArray(NoteArray::Grid2x2) },
     )]
     fn parse_model(value: &str, expected: Model) {
         assert_eq!(value.parse::<Model>(), Ok(expected));

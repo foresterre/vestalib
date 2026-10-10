@@ -3,7 +3,7 @@ pub mod message;
 
 pub use enablement::{Enabled, Enablement};
 pub use message::{
-    Message, ReadMessage, SendMessage, Strategy, Transition, UnavailableCharacter, UnknownStrategy,
+    InvalidMessage, Message, ReadMessage, SendMessage, Strategy, Transition, UnknownStrategy,
 };
 
 #[cfg(test)]

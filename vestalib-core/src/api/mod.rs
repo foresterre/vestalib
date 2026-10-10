@@ -1,3 +1,4 @@
+pub mod cloud;
 pub mod local;
 
 use crate::client::{ENABLEMENT_TOKEN_HEADER, EnablementToken};
@@ -51,6 +52,7 @@ pub enum Authentication<'a> {
     None,
     ApiKey,
     EnablementToken(&'a EnablementToken),
+    CloudToken,
 }
 
 #[derive(fmt::Debug)]
@@ -96,6 +98,8 @@ pub enum ApiError<C: std::error::Error + Send + Sync + 'static> {
     Client { error: C },
     #[error("No Local API key found")]
     NoApiKey,
+    #[error("No Cloud API token found")]
+    NoCloudToken,
     #[error("Unable to build HTTP request: '{}'", error)]
     HttpRequest { error: http::Error },
     #[error("HTTP request failed with status code '{}': '{}'", status_code, body)]
@@ -158,6 +162,16 @@ pub trait Client {
         &self,
         request_builder: http::request::Builder,
     ) -> Result<http::request::Builder, ApiError<Self::Error>>;
+
+    /// Adds the Cloud API token to a request of an endpoint which requires it.
+    ///
+    /// Returns [`ApiError::NoCloudToken`] when the client has no Cloud API token.
+    fn authorize_cloud(
+        &self,
+        _request_builder: http::request::Builder,
+    ) -> Result<http::request::Builder, ApiError<Self::Error>> {
+        Err(ApiError::NoCloudToken)
+    }
 
     // By separating the request builder and the body, additional items may be added
     // to the request, such as authentication.
@@ -223,6 +237,7 @@ where
         Authentication::EnablementToken(token) => {
             request.header(ENABLEMENT_TOKEN_HEADER, token.as_header_value().clone())
         }
+        Authentication::CloudToken => client.authorize_cloud(request)?,
     };
 
     // send

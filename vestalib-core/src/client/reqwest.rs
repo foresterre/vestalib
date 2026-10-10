@@ -1,13 +1,14 @@
 use crate::api::ApiError::HttpRequest;
 use crate::api::{ApiError, Client};
-use crate::client::{API_KEY_HEADER, ApiKey};
+use crate::client::{API_KEY_HEADER, ApiKey, CLOUD_TOKEN_HEADER, CloudToken};
 use bytes::Bytes;
 use http::request::Builder;
 use reqwest::ResponseBuilderExt;
 use std::borrow::Cow;
-use url::Url;
+use url::{Host, Url};
 
 pub const DEFAULT_URL: &str = "http://vestaboard.local:7000/";
+pub const DEFAULT_CLOUD_URL: &str = "https://cloud.vestaboard.com/";
 
 pub struct ReqwestClient {
     client: reqwest::blocking::Client,
@@ -19,18 +20,14 @@ pub struct ReqwestClient {
 }
 
 impl ReqwestClient {
-    pub fn new(mut url: Url) -> Result<Self, NewClientError> {
+    pub fn new(url: Url) -> Result<Self, NewClientError> {
         if url.scheme() != "http" {
             return Err(NewClientError::UnsupportedScheme { url });
         }
 
-        if !url.path().ends_with('/') {
-            url.set_path(&format!("{}/", url.path()));
-        }
-
         Ok(Self {
             client: reqwest::blocking::ClientBuilder::default().build()?,
-            url,
+            url: with_trailing_slash(url),
             api_key: None,
         })
     }
@@ -40,33 +37,13 @@ impl ReqwestClient {
         self.api_key = Some(api_key);
         self
     }
-
-    fn send_request(
-        &self,
-        request: http::Request<Vec<u8>>,
-    ) -> Result<http::Response<Bytes>, Error> {
-        // https://docs.rs/reqwest/latest/reqwest/blocking/struct.Request.html#method.try_from
-        let req = request.try_into()?;
-
-        // execute the query
-        let res = self.client.execute(req)?;
-
-        // no try_into from reqwest::blocking::Response for http::Response
-        let http_res = into_http_response(res)?;
-
-        Ok(http_res)
-    }
 }
 
 impl Client for ReqwestClient {
     type Error = Error;
 
     fn base_endpoint(&self, path: &str) -> Result<Url, ApiError<Self::Error>> {
-        self.url.join(path).map_err(|e| ApiError::Url {
-            error: e,
-            url: self.url.to_string(),
-            path: Cow::Owned(path.to_string()),
-        })
+        join(&self.url, path)
     }
 
     fn authorize(&self, request_builder: Builder) -> Result<Builder, ApiError<Self::Error>> {
@@ -83,12 +60,64 @@ impl Client for ReqwestClient {
         request_builder: Builder,
         body: Vec<u8>,
     ) -> Result<http::Response<Bytes>, ApiError<Self::Error>> {
-        let request = request_builder
-            .body(body)
-            .map_err(|error| HttpRequest { error })?;
+        send(&self.client, request_builder, body)
+    }
+}
 
-        self.send_request(request)
-            .map_err(|error| ApiError::Client { error })
+pub struct ReqwestCloudClient {
+    client: reqwest::blocking::Client,
+    url: Url,
+    token: Option<CloudToken>,
+}
+
+impl ReqwestCloudClient {
+    /// The url must use HTTPS, so the Cloud API token is never sent in plain text.
+    /// Plain HTTP is only accepted for loopback addresses, e.g. for a local test server.
+    pub fn new(url: Url) -> Result<Self, NewClientError> {
+        if !is_secure(&url) {
+            return Err(NewClientError::InsecureScheme { url });
+        }
+
+        Ok(Self {
+            client: reqwest::blocking::ClientBuilder::default().build()?,
+            url: with_trailing_slash(url),
+            token: None,
+        })
+    }
+
+    /// Cloud API token for endpoints which require authentication.
+    pub fn with_token(mut self, token: CloudToken) -> Self {
+        self.token = Some(token);
+        self
+    }
+}
+
+impl Client for ReqwestCloudClient {
+    type Error = Error;
+
+    fn base_endpoint(&self, path: &str) -> Result<Url, ApiError<Self::Error>> {
+        join(&self.url, path)
+    }
+
+    fn authorize(&self, _request_builder: Builder) -> Result<Builder, ApiError<Self::Error>> {
+        Err(ApiError::NoApiKey)
+    }
+
+    fn authorize_cloud(&self, request_builder: Builder) -> Result<Builder, ApiError<Self::Error>> {
+        match &self.token {
+            Some(token) => {
+                Ok(request_builder.header(CLOUD_TOKEN_HEADER, token.as_header_value().clone()))
+            }
+            None => Err(ApiError::NoCloudToken),
+        }
+    }
+
+    fn send(
+        &self,
+        request_builder: Builder,
+        body: Vec<u8>,
+    ) -> Result<http::Response<Bytes>, ApiError<Self::Error>> {
+        send(&self.client, request_builder, body)
     }
 }
 
@@ -115,6 +144,74 @@ pub enum NewClientError {
         url.scheme()
     )]
     UnsupportedScheme { url: Url },
+    #[error(
+        "The Cloud API token may only be sent over HTTPS, but '{}' uses the '{}' scheme",
+        url,
+        url.scheme()
+    )]
+    InsecureScheme { url: Url },
+}
+
+fn with_trailing_slash(mut url: Url) -> Url {
+    if !url.path().ends_with('/') {
+        url.set_path(&format!("{}/", url.path()));
+    }
+
+    url
+}
+
+fn is_secure(url: &Url) -> bool {
+    let is_loopback = match url.host() {
+        Some(Host::Domain(domain)) => domain == "localhost",
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        None => false,
+    };
+
+    match url.scheme() {
+        "https" => true,
+        "http" => is_loopback,
+        _ => false,
+    }
+}
+
+fn join<E: std::error::Error + Send + Sync + 'static>(
+    url: &Url,
+    path: &str,
+) -> Result<Url, ApiError<E>> {
+    url.join(path).map_err(|e| ApiError::Url {
+        error: e,
+        url: url.to_string(),
+        path: Cow::Owned(path.to_string()),
+    })
+}
+
+fn send(
+    client: &reqwest::blocking::Client,
+    request_builder: Builder,
+    body: Vec<u8>,
+) -> Result<http::Response<Bytes>, ApiError<Error>> {
+    let request = request_builder
+        .body(body)
+        .map_err(|error| HttpRequest { error })?;
+
+    send_request(client, request).map_err(|error| ApiError::Client { error })
+}
+
+fn send_request(
+    client: &reqwest::blocking::Client,
+    request: http::Request<Vec<u8>>,
+) -> Result<http::Response<Bytes>, Error> {
+    // https://docs.rs/reqwest/latest/reqwest/blocking/struct.Request.html#method.try_from
+    let req = request.try_into()?;
+
+    // execute the query
+    let res = client.execute(req)?;
+
+    // no try_into from reqwest::blocking::Response for http::Response
+    let http_res = into_http_response(res)?;
+
+    Ok(http_res)
 }
 
 fn into_http_response(res: reqwest::blocking::Response) -> Result<http::Response<Bytes>, Error> {
@@ -167,5 +264,44 @@ mod tests {
     #[test]
     fn default_url_is_valid() {
         assert!(ReqwestClient::new(Url::parse(DEFAULT_URL).unwrap()).is_ok());
+    }
+
+    #[yare::parameterized(
+        root = { "https://cloud.vestaboard.com", "", "https://cloud.vestaboard.com/" },
+        transition = { "https://cloud.vestaboard.com/", "transition", "https://cloud.vestaboard.com/transition" },
+        path = { "https://proxy.example/cloud", "vbml/format", "https://proxy.example/cloud/vbml/format" },
+    )]
+    fn cloud_base_endpoint(url: &str, path: &str, expected: &str) {
+        let client = ReqwestCloudClient::new(Url::parse(url).unwrap()).unwrap();
+
+        assert_eq!(client.base_endpoint(path).unwrap().as_str(), expected);
+    }
+
+    #[yare::parameterized(
+        https = { "https://cloud.vestaboard.com" },
+        localhost = { "http://localhost:8080" },
+        ipv4_loopback = { "http://127.0.0.1:8080" },
+        ipv6_loopback = { "http://[::1]:8080" },
+    )]
+    fn cloud_accepts_secure_urls(url: &str) {
+        assert!(ReqwestCloudClient::new(Url::parse(url).unwrap()).is_ok());
+    }
+
+    #[yare::parameterized(
+        http = { "http://cloud.vestaboard.com" },
+        local_board = { "http://vestaboard.local:7000" },
+        private_ip = { "http://192.168.1.101:7000" },
+        file = { "file:///tmp/board" },
+    )]
+    fn cloud_rejects_insecure_urls(url: &str) {
+        assert!(matches!(
+            ReqwestCloudClient::new(Url::parse(url).unwrap()),
+            Err(NewClientError::InsecureScheme { .. })
+        ));
+    }
+
+    #[test]
+    fn default_cloud_url_is_valid() {
+        assert!(ReqwestCloudClient::new(Url::parse(DEFAULT_CLOUD_URL).unwrap()).is_ok());
     }
 }
