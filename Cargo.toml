@@ -6,6 +6,7 @@ version = "1.0.0"
 authors = ["Martijn Gribnau <garm@ilumeo.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/foresterre/vestalib"
 
 [workspace.dependencies]
 # this workspace
@@ -24,6 +25,7 @@ version.workspace = true
 authors.workspace = true
 edition.workspace = true
 license.workspace = true
+repository.workspace = true
 
 [[bin]]
 name = "vestalib"
