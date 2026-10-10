@@ -1,0 +1,41 @@
+[workspace]
+members = ["vestalib-cli", "vestalib-core"]
+
+[workspace.package]
+version = "1.0.0"
+authors = ["Martijn Gribnau <garm@ilumeo.com>"]
+edition = "2024"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+# this workspace
+vestalib-core = { version = "1.0.0", path = "vestalib-core" }
+vestalib-cli = { version = "1.0.0", path = "vestalib-cli" }
+
+# external
+anyhow = "1"
+serde = "1.0.229"
+serde_json = "1"
+
+[package]
+name = "vestalib"
+description = "vestalib HTTP client library (and optional CLI) for the Vestaboard Local API"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "vestalib"
+path = "src/main.rs"
+required-features = ["cli"]
+
+[dependencies]
+vestalib-core.workspace = true
+vestalib-cli = { workspace = true, optional = true }
+anyhow = { workspace = true, optional = true }
+
+[features]
+default = []
+# The `vestalib` binary
+cli = ["dep:vestalib-cli", "dep:anyhow"]
