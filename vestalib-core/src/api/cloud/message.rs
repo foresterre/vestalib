@@ -1,4 +1,5 @@
-use crate::api::{Authentication, Body, BodyError, Endpoint};
+use crate::api::cloud::{Authentication, Cloud};
+use crate::api::{Body, BodyError, Endpoint};
 use crate::board::{Character, Layout};
 use serde::de::Error as _;
 use std::borrow::Cow;
@@ -15,6 +16,8 @@ impl ReadMessage {
 }
 
 impl Endpoint for ReadMessage {
+    type Api = Cloud;
+
     fn method(&self) -> http::Method {
         http::Method::GET
     }
@@ -23,7 +26,7 @@ impl Endpoint for ReadMessage {
         Cow::Borrowed("")
     }
 
-    fn authentication(&self) -> Authentication<'_> {
+    fn authentication(&self) -> Authentication {
         Authentication::CloudToken
     }
 }
@@ -127,6 +130,8 @@ impl<'a> SendMessage<'a> {
 }
 
 impl<'a> Endpoint for SendMessage<'a> {
+    type Api = Cloud;
+
     fn method(&self) -> http::Method {
         http::Method::POST
     }
@@ -159,7 +164,7 @@ impl<'a> Endpoint for SendMessage<'a> {
         .map(Some)
     }
 
-    fn authentication(&self) -> Authentication<'_> {
+    fn authentication(&self) -> Authentication {
         Authentication::CloudToken
     }
 }

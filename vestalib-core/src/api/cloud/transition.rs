@@ -1,4 +1,5 @@
-use crate::api::{Authentication, Body, BodyError, Endpoint};
+use crate::api::cloud::{Authentication, Cloud};
+use crate::api::{Body, BodyError, Endpoint};
 use std::borrow::Cow;
 use std::fmt;
 use std::str::FromStr;
@@ -16,6 +17,8 @@ impl ReadTransition {
 }
 
 impl Endpoint for ReadTransition {
+    type Api = Cloud;
+
     fn method(&self) -> http::Method {
         http::Method::GET
     }
@@ -24,7 +27,7 @@ impl Endpoint for ReadTransition {
         Cow::Borrowed("transition")
     }
 
-    fn authentication(&self) -> Authentication<'_> {
+    fn authentication(&self) -> Authentication {
         Authentication::CloudToken
     }
 }
@@ -44,6 +47,8 @@ impl SetTransition {
 }
 
 impl Endpoint for SetTransition {
+    type Api = Cloud;
+
     fn method(&self) -> http::Method {
         http::Method::PUT
     }
@@ -56,7 +61,7 @@ impl Endpoint for SetTransition {
         Body::json(&self.transition).map(Some)
     }
 
-    fn authentication(&self) -> Authentication<'_> {
+    fn authentication(&self) -> Authentication {
         Authentication::CloudToken
     }
 }

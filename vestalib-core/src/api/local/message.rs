@@ -1,4 +1,5 @@
-use crate::api::{Authentication, Body, BodyError, Endpoint};
+use crate::api::local::{Authentication, Local};
+use crate::api::{Body, BodyError, Endpoint};
 use crate::board::{Character, InvalidSize, Layout, Model};
 use std::borrow::Cow;
 use std::fmt;
@@ -17,6 +18,8 @@ impl ReadMessage {
 }
 
 impl Endpoint for ReadMessage {
+    type Api = Local;
+
     fn method(&self) -> http::Method {
         http::Method::GET
     }
@@ -100,6 +103,8 @@ impl<'a> SendMessage<'a> {
 }
 
 impl<'a> Endpoint for SendMessage<'a> {
+    type Api = Local;
+
     fn method(&self) -> http::Method {
         http::Method::POST
     }

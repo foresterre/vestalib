@@ -9,10 +9,25 @@ pub use transition::{
     UnknownTransitionSpeed, UnknownTransitionType,
 };
 
+use crate::api::Api;
+
+pub enum Cloud {}
+
+impl Api for Cloud {
+    type Authentication<'a> = Authentication;
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Authentication {
+    #[default]
+    None,
+    CloudToken,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{Authentication, Endpoint};
+    use crate::api::Endpoint;
     use crate::board::Model;
     use http::Method;
     use std::borrow::Cow;
@@ -25,7 +40,7 @@ mod tests {
         format_message = { &FormatMessage::new(Cow::Borrowed("HI"), Model::Note), Method::POST, "vbml/format", Authentication::None },
     )]
     fn endpoint(
-        endpoint: &dyn Endpoint,
+        endpoint: &dyn Endpoint<Api = Cloud>,
         method: Method,
         path: &str,
         authentication: Authentication,

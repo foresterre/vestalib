@@ -9,10 +9,9 @@ use vestalib_core::api::cloud::{TransitionSpeed, TransitionType};
 use vestalib_core::api::local::{Enablement, ReadMessage, SendMessage, Strategy, Transition};
 use vestalib_core::api::{Json, Query, Void};
 use vestalib_core::board::{Layout, Model};
-use vestalib_core::client::{
-    ApiKey, CloudToken, DEFAULT_CLOUD_URL, DEFAULT_URL, EnablementToken, ReqwestClient,
-    ReqwestCloudClient,
-};
+use vestalib_core::client::ReqwestClient;
+use vestalib_core::client::cloud::{CloudConnection, CloudToken, DEFAULT_CLOUD_URL};
+use vestalib_core::client::local::{ApiKey, DEFAULT_LOCAL_URL, EnablementToken, LocalConnection};
 
 pub fn run() -> anyhow::Result<()> {
     if let Some(value) = execute(Cli::parse())? {
@@ -54,7 +53,7 @@ struct Cli {
     /// Per the docs, a second Vestaboard on the network is reachable at
     /// http://vestaboard-2.local:7000, a third at http://vestaboard-3.local:7000, etc.
     /// This is untested, I only have one vestaboard.
-    #[arg(long, env = "VESTABOARD_URL", default_value = DEFAULT_URL)]
+    #[arg(long, env = "VESTABOARD_URL", default_value = DEFAULT_LOCAL_URL)]
     url: Url,
 
     /// Local API key, as printed by the `enable` command.
@@ -66,14 +65,15 @@ struct Cli {
 }
 
 impl Cli {
-    fn client(&self) -> anyhow::Result<ReqwestClient> {
-        let mut client = ReqwestClient::new(self.url.clone())?;
+    fn client(&self) -> anyhow::Result<ReqwestClient<LocalConnection>> {
+        let mut connection = LocalConnection::new(self.url.clone())?;
 
         if let Some(api_key) = self.api_key.as_deref() {
-            client = client.with_api_key(ApiKey::new(api_key).context("Invalid Local API key")?);
+            connection =
+                connection.with_api_key(ApiKey::new(api_key).context("Invalid Local API key")?);
         }
 
-        Ok(client)
+        Ok(ReqwestClient::new(connection)?)
     }
 }
 
@@ -198,14 +198,15 @@ pub struct CloudOpts {
 }
 
 impl CloudOpts {
-    fn client(&self) -> anyhow::Result<ReqwestCloudClient> {
-        let mut client = ReqwestCloudClient::new(self.url.clone())?;
+    fn client(&self) -> anyhow::Result<ReqwestClient<CloudConnection>> {
+        let mut connection = CloudConnection::new(self.url.clone())?;
 
         if let Some(token) = self.token.as_deref() {
-            client = client.with_token(CloudToken::new(token).context("Invalid Cloud API token")?);
+            connection =
+                connection.with_token(CloudToken::new(token).context("Invalid Cloud API token")?);
         }
 
-        Ok(client)
+        Ok(ReqwestClient::new(connection)?)
     }
 
     fn execute(&self) -> anyhow::Result<serde_json::Value> {

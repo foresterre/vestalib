@@ -7,20 +7,22 @@ use vestalib_core::api::cloud::{
     FormatMessage, Message, ReadMessage, ReadTransition, SendMessage, Sent, SetTransition,
     Transition, TransitionSpeed, TransitionType,
 };
-use vestalib_core::api::local;
 use vestalib_core::api::{ApiError, Json, Query, ResponseBody};
 use vestalib_core::board::{Layout, Model, NoteArray};
-use vestalib_core::client::{CloudToken, ReqwestCloudClient};
+use vestalib_core::client::ReqwestClient;
+use vestalib_core::client::cloud::{CloudConnection, CloudToken};
 
 const TOKEN: &str = "cloud-api-token";
 const TOKEN_HEADER: &str = "X-Vestaboard-Token";
 const SENT: &str =
     r#"{"status":"ok","id":"9b4f13f0-4623-4fb9-8fbf-09ae13350da1","created":1681154452865}"#;
 
-fn client(server: &ServerGuard) -> ReqwestCloudClient {
-    ReqwestCloudClient::new(Url::parse(&server.url()).unwrap())
+fn client(server: &ServerGuard) -> ReqwestClient<CloudConnection> {
+    let connection = CloudConnection::new(Url::parse(&server.url()).unwrap())
         .unwrap()
-        .with_token(CloudToken::new(TOKEN).unwrap())
+        .with_token(CloudToken::new(TOKEN).unwrap());
+
+    ReqwestClient::new(connection).unwrap()
 }
 
 fn hello_world() -> Layout {
@@ -168,7 +170,9 @@ fn format_message_without_token() {
         ))
         .with_body(serde_json::to_string(&hello_world()).unwrap())
         .create();
-    let client = ReqwestCloudClient::new(Url::parse(&server.url()).unwrap()).unwrap();
+    let client =
+        ReqwestClient::new(CloudConnection::new(Url::parse(&server.url()).unwrap()).unwrap())
+            .unwrap();
 
     let layout: Layout = FormatMessage::new(Cow::Borrowed("Hello World"), Model::Flagship)
         .query(&client)
@@ -198,23 +202,14 @@ fn read_message_as_json() {
 fn missing_token_is_an_error_before_sending() {
     let mut server = Server::new();
     let mock = server.mock("GET", Matcher::Any).expect(0).create();
-    let client = ReqwestCloudClient::new(Url::parse(&server.url()).unwrap()).unwrap();
+    let client =
+        ReqwestClient::new(CloudConnection::new(Url::parse(&server.url()).unwrap()).unwrap())
+            .unwrap();
 
     let result: Result<Message, _> = ReadMessage::new().query(&client);
 
     mock.assert();
     assert!(matches!(result, Err(ApiError::NoCloudToken)));
-}
-
-#[test]
-fn local_endpoint_is_an_error_before_sending() {
-    let mut server = Server::new();
-    let mock = server.mock("GET", Matcher::Any).expect(0).create();
-
-    let result: Result<local::Message, _> = local::ReadMessage::new().query(&client(&server));
-
-    mock.assert();
-    assert!(matches!(result, Err(ApiError::NoApiKey)));
 }
 
 #[test]

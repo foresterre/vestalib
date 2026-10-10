@@ -9,16 +9,19 @@ use vestalib_core::api::local::{
 };
 use vestalib_core::api::{ApiError, Json, Query, ResponseBody, Void};
 use vestalib_core::board::{Character, Layout, Model};
-use vestalib_core::client::{ApiKey, EnablementToken, ReqwestClient};
+use vestalib_core::client::ReqwestClient;
+use vestalib_core::client::local::{ApiKey, EnablementToken, LocalConnection};
 
 const API_KEY: &str = "local-api-key";
 const API_KEY_HEADER: &str = "X-Vestaboard-Local-Api-Key";
 const ENABLEMENT_TOKEN_HEADER: &str = "X-Vestaboard-Local-Api-Enablement-Token";
 
-fn client(server: &ServerGuard) -> ReqwestClient {
-    ReqwestClient::new(Url::parse(&server.url()).unwrap())
+fn client(server: &ServerGuard) -> ReqwestClient<LocalConnection> {
+    let connection = LocalConnection::new(Url::parse(&server.url()).unwrap())
         .unwrap()
-        .with_api_key(ApiKey::new(API_KEY).unwrap())
+        .with_api_key(ApiKey::new(API_KEY).unwrap());
+
+    ReqwestClient::new(connection).unwrap()
 }
 
 fn hello_world() -> Layout {
@@ -39,7 +42,9 @@ fn enable() {
             r#"{"message":"Local API enabled","apiKey":"XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX"}"#,
         )
         .create();
-    let client = ReqwestClient::new(Url::parse(&server.url()).unwrap()).unwrap();
+    let client =
+        ReqwestClient::new(LocalConnection::new(Url::parse(&server.url()).unwrap()).unwrap())
+            .unwrap();
     let endpoint = Enablement::new(EnablementToken::new("enablement-token").unwrap());
 
     let enabled: Enabled = endpoint.query(&client).unwrap();
@@ -59,7 +64,9 @@ fn enable_with_used_token() {
         .mock("POST", "/local-api/enablement")
         .with_status(401)
         .create();
-    let client = ReqwestClient::new(Url::parse(&server.url()).unwrap()).unwrap();
+    let client =
+        ReqwestClient::new(LocalConnection::new(Url::parse(&server.url()).unwrap()).unwrap())
+            .unwrap();
     let endpoint = Enablement::new(EnablementToken::new("used").unwrap());
 
     let result: Result<Enabled, _> = endpoint.query(&client);
@@ -185,7 +192,9 @@ fn send_message_with_transition() {
 fn missing_api_key_is_an_error_before_sending() {
     let mut server = Server::new();
     let mock = server.mock("GET", "/local-api/message").expect(0).create();
-    let client = ReqwestClient::new(Url::parse(&server.url()).unwrap()).unwrap();
+    let client =
+        ReqwestClient::new(LocalConnection::new(Url::parse(&server.url()).unwrap()).unwrap())
+            .unwrap();
 
     let result: Result<Message, _> = ReadMessage::new().query(&client);
 
@@ -227,9 +236,10 @@ fn base_url_with_path() {
         .with_body(serde_json::to_string(&hello_world()).unwrap())
         .create();
     let url = Url::parse(&format!("{}/board-2", server.url())).unwrap();
-    let client = ReqwestClient::new(url)
+    let connection = LocalConnection::new(url)
         .unwrap()
         .with_api_key(ApiKey::new(API_KEY).unwrap());
+    let client = ReqwestClient::new(connection).unwrap();
 
     let _: Message = ReadMessage::new().query(&client).unwrap();
 
@@ -241,9 +251,10 @@ fn unreachable_board_is_a_client_error() {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let url = Url::parse(&format!("http://{}", listener.local_addr().unwrap())).unwrap();
     drop(listener);
-    let client = ReqwestClient::new(url)
+    let connection = LocalConnection::new(url)
         .unwrap()
         .with_api_key(ApiKey::new(API_KEY).unwrap());
+    let client = ReqwestClient::new(connection).unwrap();
 
     let result: Result<Message, _> = ReadMessage::new().query(&client);
 

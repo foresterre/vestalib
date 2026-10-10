@@ -1,11 +1,11 @@
 pub mod cloud;
 pub mod local;
 
-use crate::client::{ENABLEMENT_TOKEN_HEADER, EnablementToken};
 use bytes::Bytes;
 use http::StatusCode;
 use std::borrow::Cow;
 use std::fmt;
+use std::future::Future;
 use url::Url;
 
 #[derive(fmt::Debug, thiserror::Error)]
@@ -45,14 +45,8 @@ impl Body {
     }
 }
 
-/// How an endpoint must be authenticated.
-#[derive(Clone, Copy, fmt::Debug, Default, PartialEq, Eq)]
-pub enum Authentication<'a> {
-    #[default]
-    None,
-    ApiKey,
-    EnablementToken(&'a EnablementToken),
-    CloudToken,
+pub trait Api {
+    type Authentication<'a>: Default;
 }
 
 #[derive(fmt::Debug)]
@@ -129,6 +123,24 @@ impl<C: std::error::Error + Send + Sync + 'static> ApiError<C> {
     }
 }
 
+#[derive(Clone, Copy, fmt::Debug, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum MissingCredential {
+    #[error("No Local API key found")]
+    ApiKey,
+    #[error("No Cloud API token found")]
+    CloudToken,
+}
+
+impl<C: std::error::Error + Send + Sync + 'static> From<MissingCredential> for ApiError<C> {
+    fn from(missing: MissingCredential) -> Self {
+        match missing {
+            MissingCredential::ApiKey => ApiError::NoApiKey,
+            MissingCredential::CloudToken => ApiError::NoCloudToken,
+        }
+    }
+}
+
 /// Http endpoint trait for vestalib.
 ///
 /// # Credits
@@ -136,6 +148,8 @@ impl<C: std::error::Error + Send + Sync + 'static> ApiError<C> {
 /// Inspired by Ben Boeckel's blog [post](https://plume.benboeckel.net/~/JustAnotherBlog/designing-rust-bindings-for-rest-ap-is)
 /// titled "Designing Rust bindings for REST APIs".
 pub trait Endpoint {
+    type Api: Api;
+
     fn method(&self) -> http::Method;
 
     fn endpoint(&self) -> Cow<'static, str>;
@@ -144,34 +158,26 @@ pub trait Endpoint {
         Ok(None)
     }
 
-    fn authentication(&self) -> Authentication<'_> {
-        Authentication::None
+    fn authentication(&self) -> <Self::Api as Api>::Authentication<'_> {
+        Default::default()
     }
 }
 
-/// HTTP api trait for vestalib.
-pub trait Client {
-    type Error: std::error::Error + Send + Sync + 'static;
+pub trait Connection {
+    type Api: Api;
 
-    fn base_endpoint(&self, path: &str) -> Result<Url, ApiError<Self::Error>>;
+    fn base_url(&self) -> &Url;
 
-    /// Adds the Local API key to a request of an endpoint which requires it.
-    ///
-    /// Returns [`ApiError::NoApiKey`] when the client has no Local API key.
     fn authorize(
         &self,
         request_builder: http::request::Builder,
-    ) -> Result<http::request::Builder, ApiError<Self::Error>>;
+        authentication: <Self::Api as Api>::Authentication<'_>,
+    ) -> Result<http::request::Builder, MissingCredential>;
+}
 
-    /// Adds the Cloud API token to a request of an endpoint which requires it.
-    ///
-    /// Returns [`ApiError::NoCloudToken`] when the client has no Cloud API token.
-    fn authorize_cloud(
-        &self,
-        _request_builder: http::request::Builder,
-    ) -> Result<http::request::Builder, ApiError<Self::Error>> {
-        Err(ApiError::NoCloudToken)
-    }
+/// HTTP api trait for vestalib.
+pub trait Client: Connection {
+    type Error: std::error::Error + Send + Sync + 'static;
 
     // By separating the request builder and the body, additional items may be added
     // to the request, such as authentication.
@@ -180,6 +186,16 @@ pub trait Client {
         request_builder: http::request::Builder,
         body: Vec<u8>,
     ) -> Result<http::Response<Bytes>, ApiError<Self::Error>>;
+}
+
+pub trait AsyncClient: Connection {
+    type Error: std::error::Error + Send + Sync + 'static;
+
+    fn send_async(
+        &self,
+        request_builder: http::request::Builder,
+        body: Vec<u8>,
+    ) -> impl Future<Output = Result<http::Response<Bytes>, ApiError<Self::Error>>> + Send;
 }
 
 /// Query trait for vestalib.
@@ -192,10 +208,17 @@ pub trait Query<T, C: Client> {
     fn query(&self, client: &C) -> Result<T, ApiError<C::Error>>;
 }
 
+pub trait AsyncQuery<T, C: AsyncClient> {
+    fn query_async(&self, client: &C)
+    -> impl Future<Output = Result<T, ApiError<C::Error>>> + Send;
+}
+
 impl<E> Endpoint for &E
 where
     E: Endpoint,
 {
+    type Api = E::Api;
+
     fn method(&self) -> http::Method {
         (*self).method()
     }
@@ -208,17 +231,27 @@ where
         (*self).body()
     }
 
-    fn authentication(&self) -> Authentication<'_> {
+    fn authentication(&self) -> <Self::Api as Api>::Authentication<'_> {
         (*self).authentication()
     }
 }
 
-fn send<E, C>(endpoint: &E, client: &C) -> Result<http::Response<Bytes>, ApiError<C::Error>>
+fn request<Err, E, C>(
+    endpoint: &E,
+    connection: &C,
+) -> Result<(http::request::Builder, Vec<u8>), ApiError<Err>>
 where
+    Err: std::error::Error + Send + Sync + 'static,
     E: Endpoint,
-    C: Client,
+    C: Connection<Api = E::Api>,
 {
-    let url = client.base_endpoint(endpoint.endpoint().as_ref())?;
+    let base_url = connection.base_url();
+    let path = endpoint.endpoint();
+    let url = base_url.join(&path).map_err(|error| ApiError::Url {
+        error,
+        url: base_url.to_string(),
+        path,
+    })?;
 
     // build the request
     let body = endpoint.body()?;
@@ -231,20 +264,17 @@ where
         request = request.header(http::header::CONTENT_TYPE, body.content_type());
     }
 
-    let request = match endpoint.authentication() {
-        Authentication::None => request,
-        Authentication::ApiKey => client.authorize(request)?,
-        Authentication::EnablementToken(token) => {
-            request.header(ENABLEMENT_TOKEN_HEADER, token.as_header_value().clone())
-        }
-        Authentication::CloudToken => client.authorize_cloud(request)?,
-    };
+    let request = connection.authorize(request, endpoint.authentication())?;
 
-    // send
-    let body = body.map(Body::into_bytes).unwrap_or_default();
-    let response = client.send(request, body)?;
+    Ok((request, body.map(Body::into_bytes).unwrap_or_default()))
+}
 
-    // handle response errors
+fn check_status<Err>(
+    response: http::Response<Bytes>,
+) -> Result<http::Response<Bytes>, ApiError<Err>>
+where
+    Err: std::error::Error + Send + Sync + 'static,
+{
     if !response.status().is_success() {
         return Err(ApiError::HttpResponse {
             status_code: response.status(),
@@ -255,14 +285,50 @@ where
     Ok(response)
 }
 
+fn send<E, C>(endpoint: &E, client: &C) -> Result<http::Response<Bytes>, ApiError<C::Error>>
+where
+    E: Endpoint,
+    C: Client<Api = E::Api>,
+{
+    let (request, body) = request::<C::Error, _, _>(endpoint, client)?;
+
+    check_status(client.send(request, body)?)
+}
+
+async fn send_async<E, C>(
+    endpoint: &E,
+    client: &C,
+) -> Result<http::Response<Bytes>, ApiError<C::Error>>
+where
+    E: Endpoint,
+    C: AsyncClient<Api = E::Api>,
+{
+    let (request, body) = request::<C::Error, _, _>(endpoint, client)?;
+
+    check_status(client.send_async(request, body).await?)
+}
+
 impl<E, T, C> Query<T, C> for E
 where
     E: Endpoint,
     T: serde::de::DeserializeOwned,
-    C: Client,
+    C: Client<Api = E::Api>,
 {
     fn query(&self, client: &C) -> Result<T, ApiError<C::Error>> {
         let response = send(self, client)?;
+
+        serde_json::from_slice::<T>(response.body()).map_err(ApiError::parse_type_error::<T>)
+    }
+}
+
+impl<E, T, C> AsyncQuery<T, C> for E
+where
+    E: Endpoint + Sync,
+    T: serde::de::DeserializeOwned,
+    C: AsyncClient<Api = E::Api> + Sync,
+{
+    async fn query_async(&self, client: &C) -> Result<T, ApiError<C::Error>> {
+        let response = send_async(self, client).await?;
 
         serde_json::from_slice::<T>(response.body()).map_err(ApiError::parse_type_error::<T>)
     }
@@ -282,10 +348,20 @@ impl<E> Json<E> {
 impl<E, C> Query<serde_json::Value, C> for Json<E>
 where
     E: Endpoint,
-    C: Client,
+    C: Client<Api = E::Api>,
 {
     fn query(&self, client: &C) -> Result<serde_json::Value, ApiError<C::Error>> {
         self.endpoint.query(client)
+    }
+}
+
+impl<E, C> AsyncQuery<serde_json::Value, C> for Json<E>
+where
+    E: Endpoint + Sync,
+    C: AsyncClient<Api = E::Api> + Sync,
+{
+    async fn query_async(&self, client: &C) -> Result<serde_json::Value, ApiError<C::Error>> {
+        self.endpoint.query_async(client).await
     }
 }
 
@@ -303,10 +379,20 @@ impl<E> Void<E> {
 impl<E, C> Query<(), C> for Void<E>
 where
     E: Endpoint,
-    C: Client,
+    C: Client<Api = E::Api>,
 {
     fn query(&self, client: &C) -> Result<(), ApiError<C::Error>> {
         send(&self.endpoint, client).map(|_| ())
+    }
+}
+
+impl<E, C> AsyncQuery<(), C> for Void<E>
+where
+    E: Endpoint + Sync,
+    C: AsyncClient<Api = E::Api> + Sync,
+{
+    async fn query_async(&self, client: &C) -> Result<(), ApiError<C::Error>> {
+        send_async(&self.endpoint, client).await.map(|_| ())
     }
 }
 

@@ -1,3 +1,4 @@
+use crate::api::cloud::Cloud;
 use crate::api::{Body, BodyError, Endpoint};
 use crate::board::Model;
 use std::borrow::Cow;
@@ -19,6 +20,8 @@ impl<'a> FormatMessage<'a> {
 }
 
 impl<'a> Endpoint for FormatMessage<'a> {
+    type Api = Cloud;
+
     fn method(&self) -> http::Method {
         http::Method::POST
     }
