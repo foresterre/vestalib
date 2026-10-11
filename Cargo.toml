@@ -42,3 +42,7 @@ anyhow = { workspace = true, optional = true }
 default = []
 # The `vestalib` binary
 cli = ["dep:vestalib-cli", "dep:anyhow"]
+
+[dev-dependencies]
+futures-util = { version = "0.3.34", default-features = false }
+tokio = { version = "1.53.2", features = ["macros", "rt", "time"] }

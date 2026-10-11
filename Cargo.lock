@@ -1642,6 +1642,8 @@ name = "vestalib"
 version = "2.0.0"
 dependencies = [
  "anyhow",
+ "futures-util",
+ "tokio",
  "vestalib-cli",
  "vestalib-core",
 ]
