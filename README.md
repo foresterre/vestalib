@@ -1,7 +1,7 @@
 # Vestalib
 
-... is a HTTP client library and CLI for the [Vestaboard](https://docs.vestaboard.com/docs). Currently, only the [Local API](https://docs.vestaboard.com/docs/local-api/introduction)
-is supported. 
+... is an HTTP client library and CLI for the [Vestaboard](https://docs.vestaboard.com/docs). Both the [Local API](https://docs.vestaboard.com/docs/local-api/introduction)
+and the [Cloud API](https://docs.vestaboard.com/docs/read-write-api/introduction) are supported. Both API's have been tested against a Vestaboard Note.
 
 ## Install
 
